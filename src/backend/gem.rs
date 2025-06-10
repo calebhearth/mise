@@ -33,12 +33,13 @@ impl Backend for GemBackend {
     }
 
     async fn _list_remote_versions(&self, _config: &Arc<Config>) -> eyre::Result<Vec<String>> {
-        // The `gem list` command does not supporting listing versions as json output
-        // so we use the rubygems.org api to get the list of versions.
-        let raw = HTTP_FETCH.get_text(get_gem_url(&self.tool_name())?).await?;
-        let gem_versions: Vec<GemVersion> = serde_json::from_str(&raw)?;
         let mut versions: Vec<String> = vec![];
+        let gem_versions = match fetch_gem_api_versions(&self.tool_name()).await {
+            Ok(versions) => versions,
+            Err(_) => fetch_compact_index_info_versions(&self.tool_name()).await?,
+        };
         for version in gem_versions.iter().rev() {
+            print!("{:#?} ", version);
             versions.push(version.number.clone());
         }
         Ok(versions)
@@ -78,8 +79,42 @@ impl GemBackend {
     }
 }
 
-fn get_gem_url(n: &str) -> eyre::Result<Url> {
-    Ok(format!("https://rubygems.org/api/v1/versions/{n}.json").parse()?)
+async fn fetch_gem_api_versions(gem_name: &str) -> eyre::Result<Vec<GemVersion>> {
+    // The `gem list` command does not supporting listing versions as json output
+    // so we use the rubygems.org api to get the list of versions.
+    let versions_url: Url =
+        format!("https://rubygems.org/api/v1/versions/{gem_name}.json").parse()?;
+    let raw = HTTP_FETCH.get_text(versions_url).await?;
+    let gem_versions: Vec<GemVersion> = serde_json::from_str(&raw)?;
+    Ok(gem_versions)
+}
+
+async fn fetch_compact_index_info_versions(gem_name: &str) -> eyre::Result<Vec<GemVersion>> {
+    // Some gem servers do not support the JSON API, so we fall back to Bundler's compact index API.
+    // https://guides.rubygems.org/rubygems-org-compact-index-api/#get---inforubygem
+    let info_url: Url = format!("https://rubygems.org/info/{gem_name}").parse()?;
+    let raw = HTTP_FETCH.get_text(info_url).await?;
+    let mut gem_versions: Vec<GemVersion> = raw
+        .lines()
+        .skip_while(|line| line.trim() != "---")
+        .skip(1) // Skip the "---" line
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.is_empty() {
+                return None;
+            }
+            // Split on "-" to get the version number
+            let version_parts: Vec<&str> = parts[0].split('-').collect();
+            if version_parts.is_empty() {
+                return None;
+            }
+            Some(GemVersion {
+                number: version_parts[0].to_string(),
+            })
+        })
+        .collect();
+    gem_versions.sort_by(|a, b| a.number.cmp(&b.number));
+    Ok(gem_versions)
 }
 
 fn env_script_all_bin_files(install_path: &std::path::Path) -> eyre::Result<bool> {
