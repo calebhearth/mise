@@ -3733,6 +3733,7 @@ dependencies = [
  "filetime",
  "flate2",
  "fslock",
+ "futures",
  "fuzzy-matcher",
  "gix",
  "glob",

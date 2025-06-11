@@ -453,6 +453,19 @@
           "description": "Timeout in seconds for HTTP requests to fetch new tool versions in mise.",
           "type": "string"
         },
+        "gem": {
+          "additionalProperties": false,
+          "properties": {
+            "sources": {
+              "default": ["https://rubygems.org"],
+              "description": "List of gem sources to use when installing gems.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
         "gix": {
           "default": true,
           "description": "Use gix for git operations, set to false to shell out to git.",

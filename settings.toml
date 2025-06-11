@@ -394,6 +394,12 @@ default = "5s"
 description = "Timeout in seconds for HTTP requests to fetch new tool versions in mise."
 aliases = ["fetch_remote_version_timeout"]
 
+[gem.sources]
+type = "ListString"
+default = ["https://rubygems.org"]
+rust_type = "Vec<String>"
+description = "List of gem sources to use when installing gems."
+
 [gix]
 env = "MISE_GIX"
 type = "Bool"

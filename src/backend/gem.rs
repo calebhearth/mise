@@ -9,6 +9,9 @@ use crate::install_context::InstallContext;
 use crate::toolset::ToolVersion;
 use crate::{Result, config::Config};
 use async_trait::async_trait;
+use futures::TryFutureExt;
+use futures::stream;
+use futures::stream::StreamExt;
 use indoc::formatdoc;
 use std::{fmt::Debug, sync::Arc};
 use url::Url;
@@ -33,13 +36,20 @@ impl Backend for GemBackend {
     }
 
     async fn _list_remote_versions(&self, _config: &Arc<Config>) -> eyre::Result<Vec<String>> {
+        let sources = Settings::get().gem.sources;
         let mut versions: Vec<String> = vec![];
-        let gem_versions = match fetch_gem_api_versions(&self.tool_name()).await {
-            Ok(versions) => versions,
-            Err(_) => fetch_compact_index_info_versions(&self.tool_name()).await?,
-        };
+        let gem_versions = stream::iter(sources)
+            .filter_map(|gem_source| async move {
+                let versions = fetch_gem_api_versions(&"", &self.tool_name())
+                    .or_else(|_| fetch_compact_index_info_versions(&"", &self.tool_name()))
+                    .await;
+                match versions {
+                    Ok(versions) => Some(versions),
+                    Err(e) => None,
+                }
+            })
+            .next();
         for version in gem_versions.iter().rev() {
-            print!("{:#?} ", version);
             versions.push(version.number.clone());
         }
         Ok(versions)
@@ -79,20 +89,22 @@ impl GemBackend {
     }
 }
 
-async fn fetch_gem_api_versions(gem_name: &str) -> eyre::Result<Vec<GemVersion>> {
+async fn fetch_gem_api_versions(gem_source: &str, gem_name: &str) -> eyre::Result<Vec<GemVersion>> {
     // The `gem list` command does not supporting listing versions as json output
     // so we use the rubygems.org api to get the list of versions.
-    let versions_url: Url =
-        format!("https://rubygems.org/api/v1/versions/{gem_name}.json").parse()?;
+    let versions_url: Url = format!("{gem_source}/api/v1/versions/{gem_name}.json").parse()?;
     let raw = HTTP_FETCH.get_text(versions_url).await?;
     let gem_versions: Vec<GemVersion> = serde_json::from_str(&raw)?;
     Ok(gem_versions)
 }
 
-async fn fetch_compact_index_info_versions(gem_name: &str) -> eyre::Result<Vec<GemVersion>> {
+async fn fetch_compact_index_info_versions(
+    gem_source: &str,
+    gem_name: &str,
+) -> eyre::Result<Vec<GemVersion>> {
     // Some gem servers do not support the JSON API, so we fall back to Bundler's compact index API.
     // https://guides.rubygems.org/rubygems-org-compact-index-api/#get---inforubygem
-    let info_url: Url = format!("https://rubygems.org/info/{gem_name}").parse()?;
+    let info_url: Url = format!("{gem_source}/info/{gem_name}").parse()?;
     let raw = HTTP_FETCH.get_text(info_url).await?;
     let mut gem_versions: Vec<GemVersion> = raw
         .lines()
